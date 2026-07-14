@@ -21,6 +21,10 @@ func main() {
 	defer conn.Close()
 	fmt.Println("Peril game client connected to RabbitMQ!")
 
+	publishCh, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("could not create channel: %v", err)
+	}
 	username, err := gamelogic.ClientWelcome()
 	if err != nil {
 		log.Fatalf("could not get username: %v", err)
@@ -30,8 +34,19 @@ func main() {
 
 	err = pubsub.SubscribeJSON(
 		conn,
+		routing.ExchangePerilTopic,
+		routing.ArmyMovesPrefix+"."+gs.GetUsername(),
+		routing.ArmyMovesPrefix+".*",
+		pubsub.SimpleQueueTransient,
+		handlerMove(gs),
+	)
+	if err != nil {
+		log.Fatalf("could not subscribe to army moves: %v", err)
+	}
+	err = pubsub.SubscribeJSON(
+		conn,
 		routing.ExchangePerilDirect,
-		routing.PauseKey+"."+username,
+		routing.PauseKey+"."+gs.GetUsername(),
 		routing.PauseKey,
 		pubsub.SimpleQueueTransient,
 		handlerPause(gs),
@@ -47,12 +62,22 @@ func main() {
 		}
 		switch words[0] {
 		case "move":
-			_, err := gs.CommandMove(words)
+			move, err := gs.CommandMove(words)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
 
+			err = pubsub.PublishJSON(publishCh,
+				routing.ExchangePerilTopic,
+				routing.ArmyMovesPrefix+"."+move.Player.Username,
+				move,
+			)
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				continue
+			}
+			fmt.Printf("Moved %v units to %s\n", len(move.Units), move.ToLocation)
 			// TODO: publish the move
 		case "spawn":
 			err = gs.CommandSpawn(words)
@@ -76,9 +101,27 @@ func main() {
 	}
 }
 
-func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
-	return func(ps routing.PlayingState) {
+func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.Acktype {
+	return func(move gamelogic.ArmyMove) pubsub.Acktype {
+		defer fmt.Print("> ")
+		moveOutcome := gs.HandleMove(move)
+		switch moveOutcome {
+		case gamelogic.MoveOutcomeSamePlayer:
+			return pubsub.NackDiscard
+		case gamelogic.MoveOutComeSafe:
+			return pubsub.Ack
+		case gamelogic.MoveOutcomeMakeWar:
+			return pubsub.Ack
+		}
+		fmt.Println("error: unknown move outcome")
+		return pubsub.NackDiscard
+	}
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.Acktype {
+	return func(ps routing.PlayingState) pubsub.Acktype {
 		defer fmt.Print("> ")
 		gs.HandlePause(ps)
+		return pubsub.Ack
 	}
 }

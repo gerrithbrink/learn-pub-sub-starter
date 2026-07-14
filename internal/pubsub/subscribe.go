@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"encoding/json"
+	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -30,17 +31,18 @@ func SubscribeJSON[T any](
 	if err != nil {
 		return err
 	}
-
-	for delivery := range deliveryChan {
-		var data T
-		err = json.Unmarshal(delivery.Body, data)
-		if err != nil {
-			return err
+	go func() {
+		for delivery := range deliveryChan {
+			var data T
+			err := json.Unmarshal(delivery.Body, &data)
+			if err != nil {
+				log.Println("Can't Unmarshal Data")
+				continue
+			}
+			handler(data)
+			delivery.Ack(false)
 		}
-		handler(data)
-		delivery.Ack(false)
-
-	}
+	}()
 
 	return nil
 }

@@ -17,7 +17,7 @@ func handlerMove(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogi
 		switch moveOutcome {
 		case gamelogic.MoveOutcomeSamePlayer:
 			return pubsub.Ack
-		case gamelogic.MoveOutComeSafe:
+		case gamelogic.MoveOutcomeSafe:
 			return pubsub.Ack
 		case gamelogic.MoveOutcomeMakeWar:
 			err := pubsub.PublishJSON(
